@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import axios from 'axios';
 import Consent from './steps/Consent';
@@ -8,42 +8,113 @@ import VoiceRecord from './steps/VoiceRecord';
 import Review from './steps/Review';
 import Success from './steps/Success';
 
+// ─── Session storage keys ───────────────────────────────────────────────────
+const STEP_KEY = 'plWizardStep';
+const DATA_KEY = 'plWizardData';
+const SUBJECT_KEY = 'plSubjectId';
+
+// Fields that can be safely serialized to sessionStorage (no File/Blob objects)
+const SERIALIZABLE_FIELDS = ['firstName', 'lastName', 'rollNo', 'gender', 'email', 'age', 'password', 'consent'];
+
+function loadPersistedStep() {
+    try {
+        const s = sessionStorage.getItem(STEP_KEY);
+        const v = s ? parseInt(s, 10) : NaN;
+        return isNaN(v) ? 1 : Math.max(1, Math.min(v, 6));
+    } catch { return 1; }
+}
+
+function loadPersistedData() {
+    try {
+        const raw = sessionStorage.getItem(DATA_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+}
+
+function loadPersistedSubjectId() {
+    try { return sessionStorage.getItem(SUBJECT_KEY) || ''; }
+    catch { return ''; }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+
 export default function Wizard() {
-    const [step, setStep] = useState(1);
-    const [formData, setFormData] = useState({
-        fullName: '',
-        rollNo: '',
-        branch: '',
-        email: '',
-        age: '',
-        password: '',
-        consent: false,
-        faceImages: {}, // e.g. { front: file, left: file, ... }
-        voiceSamples: {}, // e.g. { 1: url/file, 2: url/file ...}
+    const [step, setStep] = useState(() => loadPersistedStep());
+
+    const [formData, setFormData] = useState(() => {
+        const persisted = loadPersistedData();
+        return {
+            firstName: persisted?.firstName || '',
+            lastName: persisted?.lastName || '',
+            rollNo: persisted?.rollNo || '',
+            gender: persisted?.gender || '',
+            email: persisted?.email || '',
+            age: persisted?.age || '',
+            password: persisted?.password || '',
+            consent: persisted?.consent ?? false,
+            faceImages: {},          // Files can't survive a refresh
+            voiceSamples: {},        // Blobs can't survive a refresh
+        };
     });
 
-    const [subjectId, setSubjectId] = useState('');
+    const [subjectId, setSubjectId] = useState(() => loadPersistedSubjectId());
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
+
+    // ── Persist step whenever it changes ──
+    useEffect(() => {
+        try { sessionStorage.setItem(STEP_KEY, String(step)); }
+        catch { /* storage unavailable */ }
+    }, [step]);
+
+    // ── Persist serializable form fields whenever formData changes ──
+    useEffect(() => {
+        try {
+            const toSave = {};
+            SERIALIZABLE_FIELDS.forEach((k) => { toSave[k] = formData[k]; });
+            sessionStorage.setItem(DATA_KEY, JSON.stringify(toSave));
+        } catch { /* storage unavailable */ }
+    }, [formData]);
+
+    // ── Persist subjectId ──
+    useEffect(() => {
+        try {
+            if (subjectId) sessionStorage.setItem(SUBJECT_KEY, subjectId);
+        } catch { /* storage unavailable */ }
+    }, [subjectId]);
 
     const nextStep = () => setStep((prev) => prev + 1);
     const prevStep = () => setStep((prev) => prev - 1);
 
+    const clearSession = () => {
+        try {
+            sessionStorage.removeItem(STEP_KEY);
+            sessionStorage.removeItem(DATA_KEY);
+            sessionStorage.removeItem(SUBJECT_KEY);
+        } catch { /* ignore */ }
+    };
+
     const resetToRegistration = () => {
         setFormData({
-            fullName: '',
+            firstName: '',
+            lastName: '',
             rollNo: '',
-            branch: '',
+            gender: '',
             email: '',
             age: '',
             password: '',
-            consent: true, // Keep consent if they are continuing
+            consent: true,
             faceImages: {},
             voiceSamples: {},
         });
         setSubjectId('');
         setSubmitError('');
-        setStep(2); // Bypass consent
+        setStep(2);
+    };
+
+    const handleFinish = () => {
+        clearSession();
+        window.location.reload();
     };
 
     const updateFormData = (key, value) => {
@@ -56,34 +127,31 @@ export default function Wizard() {
 
         try {
             const data = new FormData();
-            data.append('fullName', formData.fullName);
+            data.append('firstName', formData.firstName);
+            if (formData.lastName) data.append('lastName', formData.lastName);
             data.append('rollNo', formData.rollNo);
-            data.append('branch', formData.branch);
+            data.append('gender', formData.gender);
             data.append('email', formData.email);
             data.append('password', formData.password);
             data.append('consent', formData.consent.toString());
             if (formData.age) data.append('age', formData.age);
 
-            // Append face images
-            Object.keys(formData.faceImages).forEach(key => {
+            Object.keys(formData.faceImages).forEach((key) => {
                 data.append('images', formData.faceImages[key]);
             });
 
-            // Append voice samples
-            Object.keys(formData.voiceSamples).forEach(key => {
+            Object.keys(formData.voiceSamples).forEach((key) => {
                 if (formData.voiceSamples[key]) {
                     data.append('audio', formData.voiceSamples[key].blob, `voice_${key}.webm`);
                 }
             });
 
-            const response = await axios.post('http://localhost:5000/api/register', data, {
-                headers: {
-                    'Content-Type': 'multipart/form-data'
-                }
+            await axios.post('http://localhost:5000/api/register', data, {
+                headers: { 'Content-Type': 'multipart/form-data' },
             });
 
-            // Assuming backend succeeds
-            setSubjectId('AIML_' + new Date().getFullYear() + '_' + Math.floor(Math.random() * 10000));
+            const id = formData.rollNo + '_' + Math.floor(1000 + Math.random() * 9000);
+            setSubjectId(id);
             nextStep();
         } catch (error) {
             console.error(error);
@@ -98,7 +166,7 @@ export default function Wizard() {
             case 1:
                 return <Consent nextStep={nextStep} formData={formData} updateFormData={updateFormData} />;
             case 2:
-                return <Registration nextStep={nextStep} formData={formData} updateFormData={updateFormData} />;
+                return <Registration nextStep={nextStep} prevStep={prevStep} formData={formData} updateFormData={updateFormData} />;
             case 3:
                 return <FaceUpload nextStep={nextStep} prevStep={prevStep} formData={formData} updateFormData={updateFormData} />;
             case 4:
@@ -110,7 +178,7 @@ export default function Wizard() {
                         {isSubmitting && (
                             <div className="absolute inset-0 bg-dark-900/80 backdrop-blur-sm z-50 rounded-xl flex flex-col items-center justify-center">
                                 <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                                <p className="text-primary-400 font-medium animate-pulse">Encrypting & Storing Data Securely...</p>
+                                <p className="text-primary-400 font-medium animate-pulse">Encrypting &amp; Storing Data Securely...</p>
                                 <p className="text-gray-400 text-sm mt-2">This may take a moment.</p>
                             </div>
                         )}
@@ -122,7 +190,7 @@ export default function Wizard() {
                     </div>
                 );
             case 6:
-                return <Success subjectId={subjectId} resetToRegistration={resetToRegistration} />;
+                return <Success subjectId={subjectId} onFinish={handleFinish} />;
             default:
                 return <Consent nextStep={nextStep} formData={formData} updateFormData={updateFormData} />;
         }

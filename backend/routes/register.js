@@ -5,6 +5,7 @@ const User = require("../models/user");
 const Image = require("../models/Image");
 const VoiceSample = require("../models/VoiceSample");
 const bcrypt = require("bcryptjs");
+const fs = require("fs");
 
 const router = express.Router();
 const upload = multer({ dest: "temp/" });
@@ -17,7 +18,7 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      const { fullName, email, password, rollNo, age, branch, consent } = req.body;
+      const { firstName, lastName, email, password, rollNo, age, gender, consent } = req.body;
 
       if (!consent || consent === 'false') {
         return res.status(400).json({ error: "Consent is required" });
@@ -33,12 +34,13 @@ router.post(
       const hashedPassword = await bcrypt.hash(password, salt);
 
       const user = await User.create({
-        fullName,
+        firstName,
+        lastName: lastName || null,
         email,
         password: hashedPassword,
         rollNo,
+        gender,
         age,
-        branch,
         consent: consent === 'true' || consent === true
       });
 
@@ -55,6 +57,11 @@ router.post(
             imageUrl: result.secure_url,
             publicId: result.public_id,
           });
+
+          // Delete temporary file after successful upload
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
         }
       }
 
@@ -74,6 +81,11 @@ router.post(
             audioUrl: result.secure_url,
             publicId: result.public_id,
           });
+
+          // Delete temporary file after successful upload
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
         }
       }
 
@@ -81,6 +93,17 @@ router.post(
 
     } catch (error) {
       console.error(error);
+      
+      // Cleanup temporary files on error
+      if (req.files) {
+        const allFiles = [...(req.files.images || []), ...(req.files.audio || [])];
+        allFiles.forEach(file => {
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        });
+      }
+
       res.status(500).json({ error: "Server Error" });
     }
   }
