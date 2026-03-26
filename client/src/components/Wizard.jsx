@@ -146,7 +146,7 @@ export default function Wizard() {
                 }
             });
 
-            await axios.post('http://localhost:5000/api/register', data, {
+            await axios.post(`${import.meta.env.VITE_API_URL}/api/register`, data, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
 
