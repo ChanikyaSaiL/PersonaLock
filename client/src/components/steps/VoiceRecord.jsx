@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Play, RotateCcw, ChevronLeft, ChevronRight, FileAudio } from 'lucide-react';
 
 const SENTENCES = [
