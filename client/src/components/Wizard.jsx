@@ -113,6 +113,7 @@ export default function Wizard() {
             sessionStorage.removeItem(DATA_KEY);
             sessionStorage.removeItem(SUBJECT_KEY);
             sessionStorage.removeItem('plVoiceSentenceIdx');
+            sessionStorage.removeItem('plFaceUploadView');
         } catch { /* ignore */ }
         clearAll().catch(() => {});
     };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Camera, CheckCircle, UploadCloud, ChevronLeft, ChevronRight, Check,
     Image as ImageIcon, Info, Sun, XCircle, ArrowRight, Eye
@@ -396,7 +396,19 @@ function PhotoUpload({ nextStep, prevStep, formData, updateFormData, onShowGuide
 /* ─── Main Exported Component ───────────────────────────────────────── */
 export default function FaceUpload({ nextStep, prevStep, formData, updateFormData }) {
     // 'guide' shows first; 'upload' shows after user clicks "Start Uploading"
-    const [view, setView] = useState('guide');
+    const [view, setView] = useState(() => {
+        try {
+            return sessionStorage.getItem('plFaceUploadView') || 'guide';
+        } catch {
+            return 'guide';
+        }
+    });
+
+    useEffect(() => {
+        try {
+            sessionStorage.setItem('plFaceUploadView', view);
+        } catch { /* ignore */ }
+    }, [view]);
 
     if (view === 'guide') {
         return (
