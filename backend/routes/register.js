@@ -5,10 +5,23 @@ const User = require("../models/user");
 const Image = require("../models/Image");
 const VoiceSample = require("../models/VoiceSample");
 const bcrypt = require("bcryptjs");
-const fs = require("fs");
+const streamifier = require("streamifier");
 
 const router = express.Router();
-const upload = multer({ dest: "temp/" });
+
+// Use memoryStorage — no temp directory needed, works on any host (Render, etc.)
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Helper: upload a buffer to Cloudinary via a stream
+function uploadToCloudinary(buffer, options) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(options, (err, result) => {
+      if (err) return reject(err);
+      resolve(result);
+    });
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+}
 
 router.post(
   "/register",
@@ -45,9 +58,9 @@ router.post(
       });
 
       // 2️⃣ Upload images to Cloudinary
-      if (req.files.images) {
+      if (req.files && req.files.images) {
         for (let file of req.files.images) {
-          const result = await cloudinary.uploader.upload(file.path, {
+          const result = await uploadToCloudinary(file.buffer, {
             folder: "personalock/images",
             resource_type: "image",
           });
@@ -57,20 +70,15 @@ router.post(
             imageUrl: result.secure_url,
             publicId: result.public_id,
           });
-
-          // Delete temporary file after successful upload
-          if (fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-          }
         }
       }
 
-      // 3️⃣ Upload audio files
-      if (req.files.audio) {
+      // 3️⃣ Upload audio files to Cloudinary
+      if (req.files && req.files.audio) {
         let sentenceNumber = 1;
 
         for (let file of req.files.audio) {
-          const result = await cloudinary.uploader.upload(file.path, {
+          const result = await uploadToCloudinary(file.buffer, {
             folder: "personalock/audio",
             resource_type: "video",
           });
@@ -81,29 +89,13 @@ router.post(
             audioUrl: result.secure_url,
             publicId: result.public_id,
           });
-
-          // Delete temporary file after successful upload
-          if (fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-          }
         }
       }
 
       res.json({ message: "Dataset submitted successfully" });
 
     } catch (error) {
-      console.error(error);
-      
-      // Cleanup temporary files on error
-      if (req.files) {
-        const allFiles = [...(req.files.images || []), ...(req.files.audio || [])];
-        allFiles.forEach(file => {
-          if (fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-          }
-        });
-      }
-
+      console.error("Register error:", error);
       res.status(500).json({ error: "Server Error" });
     }
   }

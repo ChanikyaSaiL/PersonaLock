@@ -7,6 +7,7 @@ import FaceUpload from './steps/FaceUpload';
 import VoiceRecord from './steps/VoiceRecord';
 import Review from './steps/Review';
 import Success from './steps/Success';
+import { loadAllFiles, loadAllAudio, saveFile, saveAudio, deleteFile, deleteAudio, clearAll } from '../utils/idbStore';
 
 // ─── Session storage keys ───────────────────────────────────────────────────
 const STEP_KEY = 'plWizardStep';
@@ -40,6 +41,7 @@ function loadPersistedSubjectId() {
 
 export default function Wizard() {
     const [step, setStep] = useState(() => loadPersistedStep());
+    const [idbReady, setIdbReady] = useState(false); // gate render until IDB loads
 
     const [formData, setFormData] = useState(() => {
         const persisted = loadPersistedData();
@@ -52,14 +54,33 @@ export default function Wizard() {
             age: persisted?.age || '',
             password: persisted?.password || '',
             consent: persisted?.consent ?? false,
-            faceImages: {},          // Files can't survive a refresh
-            voiceSamples: {},        // Blobs can't survive a refresh
+            faceImages: {},      // restored from IDB below
+            voiceSamples: {},    // restored from IDB below
         };
     });
 
     const [subjectId, setSubjectId] = useState(() => loadPersistedSubjectId());
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
+
+    // ── Rehydrate binary data from IndexedDB on first mount ──
+    useEffect(() => {
+        async function rehydrate() {
+            try {
+                const [files, audio] = await Promise.all([loadAllFiles(), loadAllAudio()]);
+                setFormData((prev) => ({
+                    ...prev,
+                    faceImages: Object.keys(files).length > 0 ? files : prev.faceImages,
+                    voiceSamples: Object.keys(audio).length > 0 ? audio : prev.voiceSamples,
+                }));
+            } catch (err) {
+                console.warn('IDB rehydration failed:', err);
+            } finally {
+                setIdbReady(true);
+            }
+        }
+        rehydrate();
+    }, []);
 
     // ── Persist step whenever it changes ──
     useEffect(() => {
@@ -91,7 +112,9 @@ export default function Wizard() {
             sessionStorage.removeItem(STEP_KEY);
             sessionStorage.removeItem(DATA_KEY);
             sessionStorage.removeItem(SUBJECT_KEY);
+            sessionStorage.removeItem('plVoiceSentenceIdx');
         } catch { /* ignore */ }
+        clearAll().catch(() => {});
     };
 
     const resetToRegistration = () => {
@@ -110,6 +133,7 @@ export default function Wizard() {
         setSubjectId('');
         setSubmitError('');
         setStep(2);
+        clearSession();
     };
 
     const handleFinish = () => {
@@ -117,8 +141,38 @@ export default function Wizard() {
         window.location.reload();
     };
 
+    /**
+     * updateFormData with automatic IDB persistence for binary fields.
+     * For 'faceImages': persist each File entry; delete entries set to null.
+     * For 'voiceSamples': persist each Blob entry; delete entries set to null.
+     */
     const updateFormData = (key, value) => {
-        setFormData((prev) => ({ ...prev, [key]: value }));
+        setFormData((prev) => {
+            const next = { ...prev, [key]: value };
+
+            if (key === 'faceImages' && value && typeof value === 'object') {
+                Object.entries(value).forEach(([poseId, file]) => {
+                    if (file) {
+                        saveFile(poseId, file).catch(() => {});
+                    } else {
+                        deleteFile(poseId).catch(() => {});
+                    }
+                });
+            }
+
+            if (key === 'voiceSamples' && value && typeof value === 'object') {
+                Object.entries(value).forEach(([idx, sample]) => {
+                    const numIdx = Number(idx);
+                    if (sample && sample.blob) {
+                        saveAudio(numIdx, sample.blob).catch(() => {});
+                    } else {
+                        deleteAudio(numIdx).catch(() => {});
+                    }
+                });
+            }
+
+            return next;
+        });
     };
 
     const submitData = async () => {
@@ -160,6 +214,15 @@ export default function Wizard() {
             setIsSubmitting(false);
         }
     };
+
+    // Show a minimal loading state while IDB data is being restored
+    if (!idbReady) {
+        return (
+            <div className="w-full flex items-center justify-center min-h-[200px]">
+                <div className="w-10 h-10 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+        );
+    }
 
     const renderStep = () => {
         switch (step) {

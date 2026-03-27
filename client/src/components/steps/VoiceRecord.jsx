@@ -14,8 +14,16 @@ const SENTENCES = [
     "This system uses both facial recognition and voice biometrics to enhance security."
 ];
 
+const SENTENCE_IDX_KEY = 'plVoiceSentenceIdx';
+
 export default function VoiceRecord({ nextStep, prevStep, formData, updateFormData }) {
-    const [currentSentenceIdx, setCurrentSentenceIdx] = useState(0);
+    const [currentSentenceIdx, setCurrentSentenceIdx] = useState(() => {
+        try {
+            const v = sessionStorage.getItem(SENTENCE_IDX_KEY);
+            const n = v !== null ? parseInt(v, 10) : 0;
+            return isNaN(n) ? 0 : Math.max(0, Math.min(n, SENTENCES.length - 1));
+        } catch { return 0; }
+    });
     const [isRecording, setIsRecording] = useState(false);
     const [recordingDuration, setRecordingDuration] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -26,6 +34,12 @@ export default function VoiceRecord({ nextStep, prevStep, formData, updateFormDa
     const audioPlayerRef = useRef(null);
     const timerRef = useRef(null);
     const playbackTimerRef = useRef(null);
+
+    // Persist active sentence index so it survives a page reload
+    useEffect(() => {
+        try { sessionStorage.setItem(SENTENCE_IDX_KEY, String(currentSentenceIdx)); }
+        catch { /* ignore */ }
+    }, [currentSentenceIdx]);
 
     const startRecording = async () => {
         try {
@@ -72,10 +86,16 @@ export default function VoiceRecord({ nextStep, prevStep, formData, updateFormDa
     const playRecording = () => {
         const sample = formData.voiceSamples[currentSentenceIdx];
         if (sample && sample.url) {
-            if (!audioPlayerRef.current) {
-                audioPlayerRef.current = new Audio(sample.url);
+            // Always create a fresh Audio object for the current sentence's URL.
+            // The old ref may still point to a previous sentence's blob URL.
+            if (audioPlayerRef.current) {
+                audioPlayerRef.current.pause();
+                audioPlayerRef.current.onloadedmetadata = null;
+                audioPlayerRef.current.ontimeupdate = null;
+                audioPlayerRef.current.onended = null;
             }
-            
+            audioPlayerRef.current = new Audio(sample.url);
+
             audioPlayerRef.current.onloadedmetadata = () => {
                 setTotalDuration(Math.floor(audioPlayerRef.current.duration));
             };
@@ -119,19 +139,34 @@ export default function VoiceRecord({ nextStep, prevStep, formData, updateFormDa
         return `${m}:${s}`;
     };
 
-    const progress = Object.keys(formData.voiceSamples).length;
+    const progress = Object.values(formData.voiceSamples).filter(Boolean).length;
     const isComplete = progress === SENTENCES.length;
     const currentSample = formData.voiceSamples[currentSentenceIdx];
 
+    const switchSentence = (newIdx) => {
+        // Stop any active playback before switching
+        if (audioPlayerRef.current) {
+            audioPlayerRef.current.pause();
+            audioPlayerRef.current.onloadedmetadata = null;
+            audioPlayerRef.current.ontimeupdate = null;
+            audioPlayerRef.current.onended = null;
+            audioPlayerRef.current = null;
+        }
+        setIsPlaying(false);
+        setPlaybackDuration(0);
+        setTotalDuration(0);
+        setCurrentSentenceIdx(newIdx);
+    };
+
     const handleNextSentence = () => {
         if (currentSentenceIdx < SENTENCES.length - 1) {
-            setCurrentSentenceIdx(prev => prev + 1);
+            switchSentence(currentSentenceIdx + 1);
         }
     };
 
     const handlePrevSentence = () => {
         if (currentSentenceIdx > 0) {
-            setCurrentSentenceIdx(prev => prev - 1);
+            switchSentence(currentSentenceIdx - 1);
         }
     };
 
