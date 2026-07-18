@@ -67,6 +67,16 @@ export default function Wizard() {
     useEffect(() => {
         async function rehydrate() {
             try {
+                // If there is no persisted step, this is a fresh session — clear any
+                // stale IDB data left over from a previous session so images don't
+                // appear as already-uploaded.
+                const hasActiveSession = Boolean(sessionStorage.getItem(STEP_KEY));
+                if (!hasActiveSession) {
+                    await clearAll().catch(() => {});
+                    setIdbReady(true);
+                    return;
+                }
+
                 const [files, audio] = await Promise.all([loadAllFiles(), loadAllAudio()]);
                 setFormData((prev) => ({
                     ...prev,
